@@ -6,7 +6,7 @@
 
 快速入口：`node skills/dsh-assistant/scripts/orchestrate.mjs status`；入队enqueue TASK.json OPTIONS.json；执行run；看板dashboard。管理命令见ENGINE.md。默认并发2，可配置1..8；不等于默认同时花费8个模型任务。
 
-**0.8.0改为任务级动态分配，以下旧版本额度描述不再适用。** Codex根据材料量、搜索范围、步骤及输出要求设定budget和timeoutMs，并用budgetReason说明理由。workload的light/standard/research/large只是建议起点，可按具体任务覆盖；不再默认整轮最多3次或累计90000token，保留统计及用户明确指定的总上限。
+**0.8.0改为任务级动态分配。** Codex根据材料量、搜索范围、步骤及输出要求设定budget和timeoutMs，并用budgetReason说明理由。workload的light/standard/research/large只是建议起点，可按具体任务覆盖；不再默认整轮最多3次或累计90000token，保留统计及用户明确指定的总上限。
 
 实现仍校验异常参数：单项工具64次、来源30个、输出30000字符、提示60000字符、时限10分钟以内；不是每项任务自动分配到这些上限。预览显示allocation，启动后按该次分配执行，续做时由Codex重新评估，不自动无上限加码。58项回归通过。
 
@@ -33,8 +33,6 @@
 本地 Codex 插件：一个工作流技能及其 Node 脚本。当前 Codex 主控，DSH DeepSeek 串行处理简单任务，Codex 负责验收和交付。复用既有 DSH 本地 HTTP 桥接认证，不需要独立 API key 或第三方依赖。
 
 ## 安装
-
-分享给别人：发送整个ZIP，接收者解压到任意目录，在该目录用PowerShell执行 `./Install-Codex.ps1`。需要本机Node 22+和Codex CLI。脚本将插件复制到用户目录、保留个人市场其他条目，并调用Codex官方CLI安装；原文件有备份。不要在安装完后直接编辑缓存。
 
 若Windows默认禁止运行脚本，可使用 `powershell -NoProfile -ExecutionPolicy Bypass -File .\Install-Codex.ps1`；仅该安装进程使用此设置，不修改系统执行策略。
 
