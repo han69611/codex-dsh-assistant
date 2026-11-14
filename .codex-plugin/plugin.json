@@ -1,0 +1,18 @@
+{
+  "name": "codex-dsh-assistant",
+  "version": "0.9.0",
+  "description": "Codex�����ӹ�����DSH����Ŀ��Ȩ��Ԥ�������������������ֶ�ģʽ�����ս�����",
+  "author": {
+    "name": "Local developer"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Codex �� DSH Э������",
+    "shortDescription": "���ش�����������������������",
+    "longDescription": "�ȼ�鱾����Ŀ��Ȩ����Ȩ��Χ����Codex������ֲ�����DSH����������δ��Ȩʱ���ֶ�ʹ�á���������Ԥ����Ԥ�����������ա�",
+    "developerName": "Local developer",
+    "category": "Developer Tools",
+    "capabilities": [],
+    "defaultPrompt": "����Codex�����ӹ������ڵ�ǰ��Ŀ��Ȩ��Χ�ڽ����ʵ�������������DSH�����˲����ս�����"
+  }
+}

@@ -1,0 +1,6 @@
+interface:
+  display_name: "Codex �� DSH Э������"
+  short_description: "Codex�����ӹ�����DSH��������"
+  default_prompt: "��Codex�������ӹ������ڵ�ǰ��Ŀ��Ȩ��Χ�ڽ����ʵ�������������DSH�����պ󽻸���"
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,13 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {assess,defaults,rotationReason,allocate} from '../skills/dsh-assistant/scripts/policy.mjs';
+const task={goal:'Extract themes',deliverable:'table',acceptance:'source checked',routing:{kind:'semantic-extract',scriptSuitable:false,estimatedDirectSeconds:180,reason:'Requires semantic comparison'}};
+test('missing assessment and complex work stay with Codex',()=>{assert.equal(assess({...task,routing:null}).delegate,false);assert.equal(assess({...task,routing:{...task.routing,kind:'architecture'}}).route,'codex');});
+test('explicit input budget blocks long context',()=>{assert.equal(assess({...task,input:'x'.repeat(13000),budget:{maxPromptChars:12000}}).route,'compress');});
+test('budget cannot silently be raised',()=>{assert.throws(()=>assess({...task,budget:{maxToolCalls:100}}));});
+test('context rotation uses last request input, not cumulative billing',()=>{const records=[{event:{type:'assistant/message',data:{usage:{inputTokens:4000,cacheReadTokens:45000}}}}];assert.equal(rotationReason({}, {projections:{asOfSeq:20}},records,defaults),'last-request-context');assert.equal(rotationReason({}, {projections:{asOfSeq:20,values:{tokenUsage:{cacheReadTokens:999999}}}},[],defaults),null);});
+test('research and long materials get different allocations',()=>{const base=allocate(task),research=allocate({...task,routing:{...task.routing,kind:'research'}}),large=allocate({...task,input:'x'.repeat(10000)});assert.ok(research.budget.maxToolCalls>base.budget.maxToolCalls);assert.ok(large.budget.maxPromptChars>base.budget.maxPromptChars);assert.ok(large.timeoutMs>base.timeoutMs);});
+test('Codex can customize allocation above preset with rationale',()=>{const result=allocate({...task,workload:'light',budget:{maxToolCalls:8,maxOutputChars:4200},timeoutMs:260000,budgetReason:'��Ҫ�Աȶ����Դ�����������ֶ�'});assert.equal(result.budget.maxToolCalls,8);assert.equal(result.timeoutMs,260000);});
+test('negative or unknown budgets fail before dispatch',()=>{assert.throws(()=>allocate({...task,budget:{maxToolCalls:-1}}));assert.throws(()=>allocate({...task,budget:{maxMagic:10}}));});
+test('planning uses steps, sources and deliverable size instead of only text length',()=>{const r=allocate({...task,planning:{sources:5,expectedSteps:4,outputChars:4500}});assert.equal(r.budget.maxToolCalls,14);assert.equal(r.budget.maxSources,5);assert.equal(r.budget.maxOutputChars,4500);});
+test('review plus handoff cost can make delegation unhelpful',()=>{assert.equal(assess({...task,planning:{reviewSeconds:150,handoffSeconds:40}}).route,'codex');assert.equal(assess({...task,planning:{risk:'high'}}).route,'codex');});

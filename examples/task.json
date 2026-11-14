@@ -1,0 +1,11 @@
+{
+  "id": "DSH-unique-task-id",
+  "goal": "��һ�ݳ���̸�й����û�����",
+  "input": "�滻Ϊ��̸����·������Ҫ�������½�",
+  "deliverable": "���10�е�������������ԭ��λ��",
+  "acceptance": "ʵ�ʶ�ȡԭ�ģ����฽֤�ݣ������Ʋ�д����ʵ",
+  "routing": {"kind":"classify","scriptSuitable":false,"estimatedDirectSeconds":180,"reason":"��Ҫ���������࣬����ɰ�ԭ�Ŀ��ٺ˲�"},
+  "budget": {"maxToolCalls":4,"maxSources":3,"maxOutputChars":1200},
+  "limits": "ֻ�������޸��ļ��������� Codex�����ɷ���������",
+  "timeoutMs": 180000
+}

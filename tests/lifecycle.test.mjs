@@ -1,0 +1,76 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {spawn} from 'node:child_process';
+const script=fileURLToPath(new URL('../skills/dsh-assistant/scripts/run.mjs',import.meta.url));
+async function scenario(t,{liveControl=false,coordinated=false,exhausted=false,previewOnly=false,missingAuthorization=false,duplicate=false,stale=false,cancelFails=false,success=false,toolCount=0,longOutput=false,manySources=false,multipleReplies=false,truncated=false,rotation=false,rotateFails=false,busyInbox=false,priorCorrection=false,taskOverride={}}={}){
+  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'dsh-plugin-test-'));
+  let prompted=false,cancels=0,created=0,target=null,requests=0,wroteControl=false;
+  const server=http.createServer(async(req,res)=>{
+    requests++;
+    let body='';for await(const chunk of req)body+=chunk;
+    const {method,payload}=JSON.parse(body);
+    let value={};
+    if(method==='session/list') value={items:['dedicated',...(created?['replacement']:[])].map(sessionId=>({sessionId,cwd:dir,running:prompted&&!success&&cancels===0,projections:{asOfSeq:10,values:{inbox:busyInbox?{'next-turn':['pending']}:{},modelSelection:{next:{provider:'deepseek-official',model:'deepseek-flash'}}}}}))};
+    if(method==='session/create'){created++;if(rotateFails){res.writeHead(500);res.end('create failed');return;}value={sessionId:'replacement'};}
+    if(method==='session/prompt'){prompted=true;target=payload.args.request.sessionId;value={accepted:true};if(liveControl&&!wroteControl){wroteControl=true;await fs.writeFile(path.join(dir,'TEST.control.json'),JSON.stringify({allocation:{budget:{maxToolCalls:8},timeoutMs:2000},reason:'ִ������ȷ��Ҫ���ι��ߣ��������˴�',revision:'v1'}));}}
+    if(method==='session/page')value={records:!prompted?[]:[...Array.from({length:toolCount},(_,i)=>({event:{seq:11+i,type:'tool/call',data:{name:'read',arguments:'{}'}}})),{event:{seq:stale?9:30,type:'assistant/message',data:{message:{content:[{type:'text',text:'RESULT TEST\n'+(longOutput?'x'.repeat(1500):manySources?'https://a.example https://b.example https://c.example https://d.example':'result')}]}}}}]};
+    if(method==='session/page'&&prompted&&multipleReplies)value.records.push({event:{seq:31,type:'assistant/message',data:{message:{content:[{type:'text',text:'RESULT TEST\ncorrect final'}]}}}});
+    if(method==='session/page'&&prompted&&truncated)value.hasMore=true;
+    if(method==='session/cancel'){cancels++;if(cancelFails){res.writeHead(500);res.end('cancel unavailable');return;}value={accepted:true};}
+    res.setHeader('content-type','application/json');res.end(JSON.stringify({result:{ok:true,value}}));
+  });
+  await new Promise(r=>server.listen(0,'127.0.0.1',r));
+  t.after(async()=>{server.closeAllConnections();await new Promise(r=>server.close(r));await fs.rm(dir,{recursive:true,force:true});});
+  await fs.writeFile(path.join(dir,'config.json'),JSON.stringify({sessionId:'dedicated',cwd:dir,completedTasks:rotation?6:0}));
+  const taskPath=path.join(dir,'task.json');
+  await fs.writeFile(taskPath,JSON.stringify({id:'TEST',goal:'test',deliverable:'text',acceptance:'verified',routing:{kind:'summarize',scriptSuitable:false,estimatedDirectSeconds:180,reason:'Long semantic task with bounded review'},timeoutMs:success||toolCount?1000:stale?50:1,...taskOverride}));
+  if(duplicate)await fs.writeFile(path.join(dir,'TEST.json'),'original evidence');
+  if(taskOverride.revisionOf)await fs.writeFile(path.join(dir,`${taskOverride.revisionOf}.json`),JSON.stringify({status:'returned',review:{outcome:'rejected'}}));
+  if(priorCorrection)await fs.writeFile(path.join(dir,'EARLIER.json'),JSON.stringify({revisionOf:taskOverride.revisionOf,status:'failed'}));
+  if(coordinated)await fs.writeFile(path.join(dir,'coordination.json'),JSON.stringify({mode:'coordinated',workspace:dir,userRequest:'�û���Ȩ��ǰ��ĿЭ��',grantedAt:'test',expiresAt:new Date(Date.now()+60000).toISOString(),usedCalls:exhausted?3:0,...(exhausted?{maxCalls:3}:{}),inputTokens:0}));
+  const flags=previewOnly?[]:coordinated?['--execute','--coordinated']:missingAuthorization?['--execute']:['--execute','--user-request','����DSHִ�б�������ģ������'];
+  const child=spawn(process.execPath,[script,taskPath,...flags],{env:{...process.env,DSH_ASSISTANT_STATE_DIR:dir,DSH_BASE_URL:`http://127.0.0.1:${server.address().port}`,DSH_BROWSER_SESSION_SECRET:Buffer.alloc(32,1).toString('base64url')},windowsHide:true});
+  let output='',error='';child.stdout.on('data',c=>output+=c);child.stderr.on('data',c=>error+=c);
+  const code=await new Promise(r=>child.on('close',r));
+  assert.equal(error,'');
+  const log=JSON.parse(output);
+  const lock=await fs.access(path.join(dir,'active.lock')).then(()=>true,()=>false);
+  return {code,log,lock,prompted,cancels,created,target,requests,config:JSON.parse(await fs.readFile(path.join(dir,'config.json'))),evidence:await fs.readFile(path.join(dir,'TEST.json'),'utf8').catch(()=>null)};
+}
+test('new matching reply returns pending acceptance',async t=>{const r=await scenario(t,{success:true});assert.equal(r.code,0);assert.equal(r.log.status,'returned');assert.match(r.log.review,/pending/);assert.equal(r.lock,false);});
+test('duplicate id preserves evidence and never dispatches',async t=>{const r=await scenario(t,{duplicate:true});assert.equal(r.code,1);assert.equal(r.prompted,false);assert.equal(r.evidence,'original evidence');assert.equal(r.lock,false);});
+test('timeout cancels and confirms stop without reporting success',async t=>{const r=await scenario(t);assert.equal(r.code,1);assert.equal(r.log.status,'timeout');assert.equal(r.log.cancelConfirmed,true);assert.equal(r.lock,false);assert.equal(r.cancels,1);});
+test('cancel failure retains serial lock',async t=>{const r=await scenario(t,{cancelFails:true});assert.equal(r.code,1);assert.equal(r.log.cancelConfirmed,false);assert.equal(r.lock,true);});
+test('old matching reply cannot complete new task',async t=>{const r=await scenario(t,{stale:true});assert.equal(r.code,1);assert.equal(r.log.status,'timeout');assert.equal(r.cancels,1);});
+test('script work is rejected without dispatch',async t=>{const r=await scenario(t,{taskOverride:{routing:{kind:'deterministic',scriptSuitable:true,estimatedDirectSeconds:180,reason:'Exact JSON extraction'}}});assert.equal(r.code,2);assert.equal(r.prompted,false);assert.equal(r.log.calls,0);assert.equal(r.log.route,'script');});
+test('short work stays with Codex',async t=>{const r=await scenario(t,{taskOverride:{routing:{kind:'summarize',scriptSuitable:false,estimatedDirectSeconds:20,reason:'Short task'}}});assert.equal(r.code,2);assert.equal(r.prompted,false);});
+test('strict tool limit is rejected rather than falsely guaranteed',async t=>{const r=await scenario(t,{taskOverride:{requireHardToolLimit:true}});assert.equal(r.code,2);assert.equal(r.prompted,false);});
+test('observed tool budget cancels execution',async t=>{const r=await scenario(t,{toolCount:4});assert.equal(r.log.status,'budget_exceeded');assert.equal(r.log.observedToolCalls,4);assert.equal(r.cancels,1);assert.equal(r.log.cancelConfirmed,true);});
+test('overshoot cannot be accepted even with final reply',async t=>{const r=await scenario(t,{toolCount:6,success:true});assert.equal(r.log.status,'budget_exceeded');assert.equal(r.code,1);});
+test('oversize final result is rejected',async t=>{const r=await scenario(t,{success:true,longOutput:true});assert.equal(r.log.budgetReason,'output-characters');assert.equal(r.code,1);});
+test('rotation sends work only to new session and preserves config history',async t=>{const r=await scenario(t,{success:true,rotation:true});assert.equal(r.code,0);assert.equal(r.created,1);assert.equal(r.target,'replacement');assert.equal(r.config.previousSessionId,'dedicated');assert.equal(r.config.completedTasks,1);});
+test('failed rotation never dispatches or changes active session',async t=>{const r=await scenario(t,{rotation:true,rotateFails:true});assert.equal(r.code,1);assert.equal(r.prompted,false);assert.equal(r.config.sessionId,'dedicated');});
+test('pending inbox prevents rotation and dispatch',async t=>{const r=await scenario(t,{rotation:true,busyInbox:true});assert.equal(r.code,1);assert.equal(r.prompted,false);assert.equal(r.created,0);});
+test('one correction can be dispatched',async t=>{const r=await scenario(t,{success:true,taskOverride:{revisionOf:'ORIGINAL'}});assert.equal(r.code,0);assert.equal(r.log.revisionOf,'ORIGINAL');});
+test('second correction never dispatches',async t=>{const r=await scenario(t,{priorCorrection:true,taskOverride:{revisionOf:'ORIGINAL'}});assert.equal(r.code,1);assert.equal(r.prompted,false);assert.match(r.log.error,/Correction already attempted/);});
+test('too many returned source URLs fail acceptance',async t=>{const r=await scenario(t,{success:true,manySources:true});assert.equal(r.code,1);assert.equal(r.log.budgetReason,'sources');});
+test('final answer replaces earlier marked progress message',async t=>{const r=await scenario(t,{success:true,multipleReplies:true});assert.equal(r.log.result,'RESULT TEST\ncorrect final');assert.equal(r.log.resultSeq,31);});
+test('truncated unobserved events cancel rather than undercount tools',async t=>{const r=await scenario(t,{success:true,truncated:true});assert.equal(r.log.status,'history_incomplete');assert.equal(r.cancels,1);assert.equal(r.log.cancelConfirmed,true);});
+test('strict OS read-only request never dispatches to DSH',async t=>{const r=await scenario(t,{taskOverride:{requireSystemReadOnly:true}});assert.equal(r.code,2);assert.equal(r.prompted,false);});
+test('zero-tool text task can return normally',async t=>{const r=await scenario(t,{success:true,taskOverride:{budget:{maxToolCalls:0}}});assert.equal(r.code,0);assert.equal(r.log.observedToolCalls,0);});
+test('zero-tool contract rejects even one observed tool',async t=>{const r=await scenario(t,{success:true,toolCount:1,taskOverride:{budget:{maxToolCalls:0}}});assert.equal(r.log.status,'budget_exceeded');});
+test('failed content contract is not returned as accepted input',async t=>{const r=await scenario(t,{success:true,taskOverride:{validation:{kind:'timed-plan',totalSeconds:300}}});assert.equal(r.log.status,'validation_failed');assert.equal(r.log.machineValidation.passed,false);assert.equal(r.code,1);});
+test('default command only previews with zero DSH requests',async t=>{const r=await scenario(t,{previewOnly:true});assert.equal(r.log.status,'preview');assert.equal(r.requests,0);assert.equal(r.evidence,null);assert.equal(r.lock,false);assert.equal(r.log.taskSha256.length,64);});
+test('execute without explicit request never contacts DSH',async t=>{const r=await scenario(t,{missingAuthorization:true});assert.equal(r.log.status,'manual_authorization_required');assert.equal(r.requests,0);assert.equal(r.code,2);});
+test('scoped coordination preserves the default tool budget',async t=>{const r=await scenario(t,{coordinated:true,success:true});assert.equal(r.code,0);assert.equal(r.log.invocation.mode,'coordinated');assert.equal(r.log.assessment.budget.maxToolCalls,4);});
+test('exhausted coordinated grant makes zero DSH requests',async t=>{const r=await scenario(t,{coordinated:true,exhausted:true});assert.equal(r.code,2);assert.equal(r.requests,0);assert.equal(r.log.takeover,'codex');});
+test('coordinated tool call is allowed within budget',async t=>{const r=await scenario(t,{coordinated:true,success:true,toolCount:1});assert.equal(r.code,0);assert.equal(r.log.observedToolCalls,1);});
+test('coordinated research can use tools',async t=>{const r=await scenario(t,{coordinated:true,success:true,toolCount:1,taskOverride:{routing:{kind:'research',scriptSuitable:false,estimatedDirectSeconds:120,reason:'�û���Ȩ�����ռ�����'}}});assert.equal(r.code,0);assert.equal(r.log.assessment.route,'dsh');});
+test('explicit zero-tool task is still respected in coordinated mode',async t=>{const r=await scenario(t,{coordinated:true,success:true,toolCount:1,taskOverride:{budget:{maxToolCalls:0}}});assert.equal(r.code,1);assert.equal(r.log.status,'budget_exceeded');});
+test('coordinated task can have more than four tools when allocated',async t=>{const r=await scenario(t,{coordinated:true,success:true,toolCount:6,taskOverride:{budget:{maxToolCalls:8},timeoutMs:1000,budgetReason:'�����˶�������ϣ������˴β���'}});assert.equal(r.code,0);assert.equal(r.log.assessment.budget.maxToolCalls,8);});
+test('live allocation steers DSH and applies increased tool budget',async t=>{const r=await scenario(t,{liveControl:true,success:true,toolCount:6});assert.equal(r.code,0);assert.equal(r.log.calls,2);assert.equal(r.log.allocationHistory[0].budget.maxToolCalls,8);});
