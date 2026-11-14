@@ -2,15 +2,15 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "codex-dsh-assistant",
   "version": "0.9.0",
-  "description": "Codex�����ӹ�����DSH����Ŀ��Ȩ��Ԥ�������������������ֶ�ģʽ�����ս�����",
+  "description": "Codex负责复杂工作，DSH在项目授权与预算内批量整理，保留手动模式与验收交付。",
   "author": {"name": "Local developer"},
   "extensions": {"com.openai": {"interface": {
-    "displayName": "Codex �� DSH Э������",
-    "shortDescription": "���ش�����������������������",
-    "longDescription": "�ȼ�鱾����Ŀ��Ȩ����Ȩ��Χ����Codex������ֲ�����DSH����������δ��Ȩʱ���ֶ�ʹ�á���������Ԥ����Ԥ�����������ա�",
+    "displayName": "Codex × DSH 协作助手",
+    "shortDescription": "主控处理复杂任务，助手批量整理",
+    "longDescription": "先检查本机项目授权；授权范围内由Codex自主拆分并调度DSH批量整理，未授权时仅手动使用。保留离线预览、预算与最终验收。",
     "developerName": "Local developer",
     "category": "Developer Tools",
     "capabilities": [],
-    "defaultPrompt": "����Codex�����ӹ������ڵ�ǰ��Ŀ��Ȩ��Χ�ڽ����ʵ�������������DSH�����˲����ս�����"
+    "defaultPrompt": "请由Codex负责复杂工作，在当前项目授权范围内将合适的批量整理交给DSH，并核查最终交付。"
   }}}
 }

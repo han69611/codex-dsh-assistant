@@ -1,19 +1,19 @@
 /**
- * dsh.mjs �� DeepSeek Harness ��������������ⲿ�������������е� DSH��
+ * dsh.mjs — DeepSeek Harness 桌面端适配器（外部进程驱动运行中的 DSH）
  *
- * ԭ������ʵ�⣩��
- *  - DSH ������� 127.0.0.1:<����˿�> ��¶���� HTTP API��`POST /api/<namespace>/<method>`��
- *  - ��֤=һ�� v1 ����� cookie��ǩ����Կ�־û��� ~/.dsh/.credentials.yaml ��
- *    `client-connection/browser-session` ��¼�����ͬ�û����̿ɶ�������˿���������ǩ��
- *  - �ŷ⣺{type:'client-request', rpcId, method, payload:{args:{<������>:<ֵ>}}}
- *    ��Ӧ��{type:'server-response', rpcId, result:{ok:true, value} | {ok:false, error}}
+ * 原理（已实测）：
+ *  - DSH 桌面端在 127.0.0.1:<随机端口> 暴露宿主 HTTP API：`POST /api/<namespace>/<method>`。
+ *  - 认证=一个 v1 浏览器 cookie，签名密钥持久化在 ~/.dsh/.credentials.yaml 的
+ *    `client-connection/browser-session` 记录里（本机同用户进程可读），因此可以离线自签。
+ *  - 信封：{type:'client-request', rpcId, method, payload:{args:{<参数名>:<值>}}}
+ *    响应：{type:'server-response', rpcId, result:{ok:true, value} | {ok:false, error}}
  *
- * ������
- *  - listSessions(): �г��Ự��ֻ���������� agent��
- *  - readSessionPage(): ��ȡһ�λỰ��ʷ��ֻ����
- *  - promptSession(): ��ָ���ỰͶ��һ���û���Ϣ��������һ�֣��и����ã����Ķ�ȡ�ִ�й��ߣ�
+ * 能力：
+ *  - listSessions(): 列出会话（只读，不唤醒 agent）
+ *  - readSessionPage(): 读取一段会话历史（只读）
+ *  - promptSession(): 向指定会话投递一条用户消息并让它跑一轮（有副作用：消耗额度、执行工具）
  *
- * ��ȫ����ǩ cookie �ȼ� owner Ȩ�ޡ�Ĭ��ֻ����prompt ��Ҫ��ʽ sessionId��
+ * 安全：自签 cookie 等价 owner 权限。默认只读；prompt 需要显式 sessionId。
  */
 
 import { execFileSync } from 'node:child_process';
@@ -25,7 +25,7 @@ import path from 'node:path';
 
 const COOKIE_PREFIX = 'dsh-auth-';
 const COOKIE_PAYLOAD_VERSION = 1;
-const DEFAULT_MAX_AGE_MS = 60 * 60 * 1000; // 1 Сʱ
+const DEFAULT_MAX_AGE_MS = 60 * 60 * 1000; // 1 小时
 
 export function dshHome() {
   return process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
@@ -35,9 +35,9 @@ function b64url(buffer) {
   return Buffer.from(buffer).toString('base64url');
 }
 
-// ---------------------------------------------------------------- ��Կ�� cookie
+// ---------------------------------------------------------------- 密钥与 cookie
 
-/** �� ~/.dsh/.credentials.yaml ��ȡ client-connection/browser-session ��ǩ����Կ�� */
+/** 从 ~/.dsh/.credentials.yaml 读取 client-connection/browser-session 的签名密钥。 */
 export function loadBrowserSessionSecret() {
   if (process.env.DSH_BROWSER_SESSION_SECRET) {
     return { secret: Buffer.from(process.env.DSH_BROWSER_SESSION_SECRET, 'base64url'), source: 'env:DSH_BROWSER_SESSION_SECRET' };
@@ -47,16 +47,16 @@ export function loadBrowserSessionSecret() {
   try {
     text = fs.readFileSync(file, 'utf8');
   } catch (err) {
-    throw new Error(`������ DSH ƾ���ļ� ${file}: ${err.message}`);
+    throw new Error(`读不到 DSH 凭据文件 ${file}: ${err.message}`);
   }
 
-  // ���� JSON ��� YAML ���ָ�ʽ
+  // 兼容 JSON 与简单 YAML 两种格式
   let secretValue = null;
   let parsedJson = null;
   try {
     parsedJson = JSON.parse(text);
   } catch {
-    /* ���� JSON */
+    /* 不是 JSON */
   }
   if (parsedJson) {
     const record = parsedJson.records?.['client-connection/browser-session'];
@@ -74,7 +74,7 @@ export function loadBrowserSessionSecret() {
         continue;
       }
       if (!inRecord) continue;
-      if (indent <= baseIndent && /^\S/.test(line)) break; // ��һ�������¼
+      if (indent <= baseIndent && /^\S/.test(line)) break; // 下一个顶层记录
       const match = line.match(/^\s*secret:\s*['"]?([A-Za-z0-9_\-+/=]+)['"]?\s*$/);
       if (match) {
         secretValue = match[1];
@@ -83,14 +83,14 @@ export function loadBrowserSessionSecret() {
     }
   }
   if (!secretValue) {
-    throw new Error(`�� ${file} ���Ҳ��� client-connection/browser-session.secret`);
+    throw new Error(`在 ${file} 里找不到 client-connection/browser-session.secret`);
   }
   const secret = Buffer.from(secretValue, 'base64url');
-  if (secret.byteLength !== 32) throw new Error('browser-session ��Կ���Ȳ��� 32 �ֽ�');
+  if (secret.byteLength !== 32) throw new Error('browser-session 密钥长度不是 32 字节');
   return { secret, source: file };
 }
 
-/** ����һ���Ϸ��� v1 ����� cookie�� */
+/** 构造一个合法的 v1 浏览器 cookie。 */
 export function buildAuthCookie({ authority, secret, maxAgeMs = DEFAULT_MAX_AGE_MS }) {
   const now = Date.now();
   const payload = {
@@ -105,7 +105,7 @@ export function buildAuthCookie({ authority, secret, maxAgeMs = DEFAULT_MAX_AGE_
   return { name, value: `v${COOKIE_PAYLOAD_VERSION}.${body}.${signature}`, payload, header: `${name}=v${COOKIE_PAYLOAD_VERSION}.${body}.${signature}` };
 }
 
-// ---------------------------------------------------------------- �˿ڷ���
+// ---------------------------------------------------------------- 端口发现
 
 function listListeningPortsWithPids() {
   if (process.platform === 'win32') {
@@ -143,7 +143,7 @@ function processImageNames() {
   return map;
 }
 
-/** �ҳ��������� HTTP API �� desktop host ���̣��ų� ego-cast-worker ��ͬ���ӽ��̣��� */
+/** 找出真正承载 HTTP API 的 desktop host 进程（排除 ego-cast-worker 等同名子进程）。 */
 let hostPidCache = { at: 0, pids: new Set() };
 function dshDesktopHostPids() {
   if (process.platform !== 'win32') return new Set();
@@ -166,13 +166,13 @@ function dshDesktopHostPids() {
       if (/dsh-desktop-host/i.test(entry.CommandLine || '')) pids.add(entry.ProcessId);
     }
   } catch {
-    /* ̽��ʧ��ʱ�˻ؾ��߼� */
+    /* 探测失败时退回旧逻辑 */
   }
   hostPidCache = { at: Date.now(), pids };
   return pids;
 }
 
-/** �� DSH ����˼����ı��ض˿ڣ�ÿ����������������������֣��� */
+/** 找 DSH 桌面端监听的本地端口（每次启动随机，按进程名发现）。 */
 export function discoverDshBase() {
   if (process.env.DSH_BASE_URL) return process.env.DSH_BASE_URL.replace(/\/+$/, '');
   if (process.env.DSH_WEB_URL) return process.env.DSH_WEB_URL.replace(/\/+$/, '');
@@ -185,13 +185,13 @@ export function discoverDshBase() {
     .filter((entry) => dshPids.has(entry.pid) && (entry.address === '127.0.0.1' || entry.address === '0.0.0.0' || entry.address === '::1'))
     .map((entry) => `http://127.0.0.1:${entry.port}`);
   let unique = [...new Set(candidates)];
-  // ����ѡ desktop host �Ķ˿ڣ�ego-cast-worker ���ӽ���Ҳ���ܼ����˿ڣ���û�� /api
+  // 优先选 desktop host 的端口；ego-cast-worker 等子进程也可能监听端口，但没有 /api
   const hostPids = dshDesktopHostPids();
   const preferred = listListeningPortsWithPids()
     .filter((entry) => hostPids.has(entry.pid) && (entry.address === '127.0.0.1' || entry.address === '0.0.0.0' || entry.address === '::1'))
     .map((entry) => `http://127.0.0.1:${entry.port}`);
   if (preferred.length) unique = [...new Set([...preferred, ...unique])];
-  if (!unique.length) throw new Error('û���ҵ����ڼ����� DSH ����ˣ����� DSH_BASE_URL ָ����');
+  if (!unique.length) throw new Error('没有找到正在监听的 DSH 桌面端（可用 DSH_BASE_URL 指定）');
   return unique[0];
 }
 
@@ -234,16 +234,16 @@ export async function dshRpc(base, method, args, { cookie, timeoutMs = 30000, fe
   try {
     body = JSON.parse(text);
   } catch {
-    throw new Error(`DSH ${method} ���ط� JSON: ${text.slice(0, 300)}`);
+    throw new Error(`DSH ${method} 返回非 JSON: ${text.slice(0, 300)}`);
   }
   if (body?.result?.ok === false) {
     const error = body.result.error || {};
-    throw new Error(`DSH ${method} ʧ��: ${error.code || 'unknown'} ${error.message || JSON.stringify(error).slice(0, 300)}`);
+    throw new Error(`DSH ${method} 失败: ${error.code || 'unknown'} ${error.message || JSON.stringify(error).slice(0, 300)}`);
   }
   return body?.result?.value ?? body;
 }
 
-// ---------------------------------------------------------------- �߲�����
+// ---------------------------------------------------------------- 高层能力
 
 export class DshClient {
   constructor({ base, cookie, secretSource }) {
@@ -283,7 +283,7 @@ export class DshClient {
     return value;
   }
 
-  /** �����»Ự��ÿ����ĿȺһ�����������䣩�� */
+  /** 创建新会话（每个项目群一个，独立记忆）。 */
   async createSession({ cwd, sessionId = null, agentPreset = null } = {}) {
     const request = {};
     if (cwd) request.cwd = cwd;
@@ -294,14 +294,14 @@ export class DshClient {
   }
 
   /**
-   * ��ָ�� DSH �ỰͶ��һ���û���Ϣ�����øûỰ������һ�֣���
+   * 向指定 DSH 会话投递一条用户消息（会让该会话真正跑一轮）。
    * @param {string} sessionId
    * @param {string} text
    * @param {{mode?:'queue'|'steer'}} options
    */
   /**
-   * ���Ựѡģ�͡��ջỰû��ģ��ʱ��ע�� prompt �ᱻ DSH �� blocked �ܾ���
-   * ����Ͷ��ǰҪȷ���Ự�п���ģ�͡�
+   * 给会话选模型。空会话没有模型时，注入 prompt 会被 DSH 以 blocked 拒绝，
+   * 所以投递前要确保会话有可用模型。
    */
   async selectModel(sessionId, selection = {}) {
     return dshRpc(
@@ -312,7 +312,7 @@ export class DshClient {
     );
   }
 
-  /** ���Ự��ûѡ��ģ�ͣ���ѡһ��Ĭ��ģ�ͣ�deepseek-flash���� */
+  /** 若会话还没选过模型，则选一个默认模型（deepseek-flash）。 */
   async ensureModel(sessionId, fallback = { provider: 'deepseek-official', model: 'deepseek-flash' }) {
     const sessions = await this.listSessions();
     const target = sessions.find((session) => (session.sessionId || session.id) === sessionId);
@@ -342,7 +342,7 @@ export class DshClient {
   }
 }
 
-/** �����Լ죺�˿ڡ���Կ��Դ���Ự���� */
+/** 环境自检：端口、密钥来源、会话数。 */
 export async function dshDoctor() {
   const result = {
     dsh_home: dshHome(),
@@ -371,7 +371,7 @@ export async function dshDoctor() {
   return result;
 }
 
-/** ��ȡ�Ự���һ�� assistant �ı������ڵȻظ�ʱ�����жϣ��� */
+/** 读取会话最近一条 assistant 文本（用于等回复时做简单判断）。 */
 export async function latestAssistantText(client, sessionId, maxMessages = 40) {
   const page = await client.readSessionPage(sessionId, { maxMessages });
   const records = Array.isArray(page?.records) ? page.records : [];

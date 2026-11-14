@@ -64,7 +64,7 @@ export class Engine {
     const dir=path.join(this.root,'workers',hash(job.workspace).slice(0,12)+'-'+slot);await fs.mkdir(dir,{recursive:true});await this.patch(job.id,j=>j.workerDir=dir);
     const {setup}=await import('./bootstrap.mjs');const ready=await setup({root:dir,cwd:job.workspace});if(ready.status!=='ready')throw Error(ready.action||ready.status);
     const config=JSON.parse(await fs.readFile(path.join(dir,'config.json')));await this.patch(job.id,j=>{j.sessionId=config.sessionId;});
-    const task={...job.task,id:job.id+'-A'+job.attempt};if(job.role==='critic')task.goal='���������������ͬ���裬��ӭ�����з�����'+task.goal;
+    const task={...job.task,id:job.id+'-A'+job.attempt};if(job.role==='critic')task.goal='独立复核与提出不同假设，不迎合现有方案。'+task.goal;
     const file=path.join(dir,task.id+'.task.json');await fs.writeFile(file,JSON.stringify(task));
     if((await this.list()).jobs.find(j=>j.id===job.id)?.cancelRequested){await this.patch(job.id,j=>{j.status='cancelled';j.cancelConfirmed=true;});return;}
     result=await this.process(job,process.execPath,[path.join(here,'run.mjs'),file,'--execute','--user-request',job.userRequest],job.workspace,{DSH_ASSISTANT_STATE_DIR:dir,DSH_ASSISTANT_SHARED_ROOT:this.root});

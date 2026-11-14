@@ -1,11 +1,11 @@
 {
   "id": "DSH-unique-task-id",
-  "goal": "��һ�ݳ���̸�й����û�����",
-  "input": "�滻Ϊ��̸����·������Ҫ�������½�",
-  "deliverable": "���10�е�������������ԭ��λ��",
-  "acceptance": "ʵ�ʶ�ȡԭ�ģ����฽֤�ݣ������Ʋ�д����ʵ",
-  "routing": {"kind":"classify","scriptSuitable":false,"estimatedDirectSeconds":180,"reason":"��Ҫ���������࣬����ɰ�ԭ�Ŀ��ٺ˲�"},
+  "goal": "从一份长访谈中归类用户诉求",
+  "input": "替换为访谈绝对路径及需要处理的章节",
+  "deliverable": "最多10行的诉求分类表，附原文位置",
+  "acceptance": "实际读取原文，分类附证据；不把推测写成事实",
+  "routing": {"kind":"classify","scriptSuitable":false,"estimatedDirectSeconds":180,"reason":"需要跨段语义归类，表格可按原文快速核查"},
   "budget": {"maxToolCalls":4,"maxSources":3,"maxOutputChars":1200},
-  "limits": "ֻ�������޸��ļ��������� Codex�����ɷ���������",
+  "limits": "只读，不修改文件，不调用 Codex，不派发其他任务",
   "timeoutMs": 180000
 }
